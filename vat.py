@@ -37,27 +37,28 @@ class VATLoss(nn.Module):
 
     def forward(self, model, x):
         with torch.no_grad():
-            pred = F.softmax(model(x), dim=1)
+            pred = model(x)['probs']
 
         # prepare random unit tensor
         d = torch.rand(x.shape).sub(0.5).to(x.device)
         d = _l2_normalize(d)
 
-        with _disable_tracking_bn_stats(model):
-            # calc adversarial direction
-            for _ in range(self.ip):
-                d.requires_grad_()
-                pred_hat = model(x + self.xi * d)
-                logp_hat = F.log_softmax(pred_hat, dim=1)
-                adv_distance = F.kl_div(logp_hat, pred, reduction='batchmean')
-                adv_distance.backward()
-                d = _l2_normalize(d.grad)
-                model.zero_grad()
+        with torch.enable_grad():
+            with _disable_tracking_bn_stats(model):
+                # calc adversarial direction
+                for _ in range(self.ip):
+                    d.requires_grad_()
+                    pred_hat = model(x + self.xi * d)['logits']
+                    logp_hat = F.log_softmax(pred_hat, dim=1)
+                    adv_distance = F.kl_div(logp_hat, pred, reduction='batchmean')
+                    adv_distance.backward()
+                    d = _l2_normalize(d.grad)
+                    model.zero_grad()
     
-            # calc LDS
-            r_adv = d * self.eps
-            pred_hat = model(x + r_adv)
-            logp_hat = F.log_softmax(pred_hat, dim=1)
-            lds = F.kl_div(logp_hat, pred, reduction='batchmean')
+        # calc LDS
+        r_adv = d * self.eps
+        pred_hat = model(x + r_adv)['logits']
+        logp_hat = F.log_softmax(pred_hat, dim=1)
+        lds = F.kl_div(logp_hat, pred, reduction='batchmean')
 
         return lds
